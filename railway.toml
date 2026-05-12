@@ -1,4 +1,3 @@
 # Railway config-as-code: https://docs.railway.com/deploy/config-as-code
-# Runs SQL in migrations/ against DATABASE_URL before the new revision goes live.
-[deploy]
-preDeployCommand = "python scripts/migrate.py"
+# Schema: applied automatically on first API startup when tables are missing (see app/schema_bootstrap.py).
+# Optional manual run: python scripts/migrate.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run SQL migrations in backend/migrations/ against DATABASE_URL (same idea as server/scripts/migrate.mjs)."""
+"""Optional: run migrations manually. The API also auto-applies them on startup if tables are missing."""
 
 from __future__ import annotations
 
@@ -9,7 +9,13 @@ import re
 import sys
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import asyncpg
+
+from app.schema_bootstrap import apply_all_migration_files
 
 
 def _require_https_db_url(url: str) -> None:
@@ -28,17 +34,9 @@ def _require_https_db_url(url: str) -> None:
 async def main() -> None:
     url = os.environ.get("DATABASE_URL", "").strip()
     _require_https_db_url(url)
-    mig_dir = Path(__file__).resolve().parent.parent / "migrations"
-    files = sorted(mig_dir.glob("*.sql"))
-    if not files:
-        print("No migrations found.", file=sys.stderr)
-        sys.exit(1)
     conn = await asyncpg.connect(url)
     try:
-        for f in files:
-            sql = f.read_text(encoding="utf-8")
-            print(f"Applying {f.name} …")
-            await conn.execute(sql)
+        await apply_all_migration_files(conn)
         print("Done.")
     finally:
         await conn.close()

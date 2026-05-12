@@ -4,12 +4,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.db import close_pool
+from app.db import close_pool, get_pool
+from app.schema_bootstrap import ensure_schema_if_needed
 from app.routers import auth, checklists, facilities, health, inspections
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings = get_settings()
+    if settings.database_url_normalized:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await ensure_schema_if_needed(conn)
     yield
     await close_pool()
 
