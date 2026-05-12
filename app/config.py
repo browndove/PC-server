@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.database_defaults import DEFAULT_DATABASE_URL
+from app.jwt_defaults import DEFAULT_JWT_SECRET
 
 
 def _settings_config() -> SettingsConfigDict:
@@ -41,6 +42,10 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expires_in: str = "7d"
     cors_origin: str = "*"
+
+    @property
+    def effective_jwt_secret(self) -> str:
+        return (self.jwt_secret or DEFAULT_JWT_SECRET).strip()
 
     @property
     def uses_database_url_from_environment(self) -> bool:

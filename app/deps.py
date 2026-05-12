@@ -17,7 +17,7 @@ async def require_jwt_secret_configured() -> None:
     """Run before DB so signup/login fail fast with a clear 503 if Railway env is incomplete."""
     from fastapi import HTTPException
 
-    if not get_settings().jwt_secret.strip():
+    if not get_settings().effective_jwt_secret.strip():
         raise HTTPException(
             status_code=503,
             detail={
