@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_pool, get_pool
-from app.schema_bootstrap import ensure_schema_if_needed
+from app.schema_bootstrap import run_startup_migrations
 from app.routers import auth, checklists, facilities, health, inspections
 
 
@@ -15,7 +15,7 @@ async def lifespan(_: FastAPI):
     if settings.database_url_normalized:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            await ensure_schema_if_needed(conn)
+            await run_startup_migrations(conn)
     yield
     await close_pool()
 

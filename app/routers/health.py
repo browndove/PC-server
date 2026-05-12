@@ -31,7 +31,9 @@ async def health() -> dict:
     }
     settings = get_settings()
     if not settings.database_url_normalized.strip():
-        base["database"]["hint"] = "DATABASE_URL is not set on this deployment."
+        base["database"]["hint"] = (
+            "No database URL: set DATABASE_URL or DEFAULT_DATABASE_URL in app/database_defaults.py."
+        )
         base["time"] = datetime.now(timezone.utc).isoformat()
         return base
     try:
@@ -45,8 +47,8 @@ async def health() -> dict:
             base["database"]["inspectorsTable"] = bool(row and row["ready"])
             if not base["database"]["inspectorsTable"]:
                 base["database"]["hint"] = (
-                    "Connected, but table public.inspectors is missing — run "
-                    "migrations against this DATABASE_URL."
+                    "Connected, but public.inspectors is missing — migrations may have failed at startup; "
+                    "check logs or run python scripts/migrate.py."
                 )
     except Exception as e:
         code = postgres_error_code(e)

@@ -3,6 +3,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.database_defaults import DEFAULT_DATABASE_URL
+
 
 def normalize_database_url(raw: str) -> str:
     """Strip channel_binding=require (can hang with some serverless drivers)."""
@@ -26,10 +28,15 @@ class Settings(BaseSettings):
     cors_origin: str = "*"
 
     @property
+    def effective_database_url(self) -> str:
+        return (self.database_url or DEFAULT_DATABASE_URL).strip()
+
+    @property
     def database_url_normalized(self) -> str:
-        if not self.database_url:
+        raw = self.effective_database_url
+        if not raw:
             return ""
-        return normalize_database_url(self.database_url)
+        return normalize_database_url(raw)
 
 
 @lru_cache
