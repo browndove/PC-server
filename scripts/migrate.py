@@ -34,7 +34,7 @@ def _require_https_db_url(url: str) -> None:
 async def main() -> None:
     url = os.environ.get("DATABASE_URL", "").strip()
     _require_https_db_url(url)
-    conn = await asyncpg.connect(url)
+    conn = await asyncpg.connect(url, statement_cache_size=0)
     try:
         await apply_all_migration_files(conn)
         print("Done.")

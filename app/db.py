@@ -19,7 +19,13 @@ async def get_pool() -> asyncpg.Pool:
         url = settings.database_url_normalized
         if not url:
             raise RuntimeError("DATABASE_URL is not set")
-        _pool = await asyncpg.create_pool(dsn=url, min_size=1, max_size=5)
+        # Neon / PgBouncer "transaction" pooler: prepared statements break inserts unless disabled.
+        _pool = await asyncpg.create_pool(
+            dsn=url,
+            min_size=1,
+            max_size=5,
+            statement_cache_size=0,
+        )
         return _pool
 
 
