@@ -6,7 +6,7 @@ import uuid
 import asyncpg
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 from app.config import get_settings
 from app.deps import get_db, require_inspector
@@ -24,10 +24,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 class SignupBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     email: EmailStr
     password: str = Field(min_length=8)
-    firstName: str = Field(min_length=1)
-    lastName: str = Field(min_length=1)
+    firstName: str = Field(min_length=1, validation_alias=AliasChoices("firstName", "first_name"))
+    lastName: str = Field(min_length=1, validation_alias=AliasChoices("lastName", "last_name"))
 
 
 class LoginBody(BaseModel):
