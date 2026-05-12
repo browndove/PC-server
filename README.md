@@ -1,6 +1,8 @@
 # Quik Inspect API (FastAPI)
 
-PostgreSQL (Neon) + JWT + **asyncpg**. Same REST routes as the legacy Node `server/` app so the Expo client can switch API base URL only.
+This **`backend/`** directory is the **FastAPI** service (Python). The legacy **`server/`** tree in the monorepo is **Node/Express** — different stack. The Expo app should point `EXPO_PUBLIC_API_URL` at wherever **this** API is hosted.
+
+Stack: PostgreSQL + **asyncpg** + JWT. Entry module: **`app.main:app`** (`app/main.py`).
 
 ## Setup
 
@@ -8,60 +10,51 @@ PostgreSQL (Neon) + JWT + **asyncpg**. Same REST routes as the legacy Node `serv
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env        # fill DATABASE_URL, JWT_SECRET
+pip install -e .            # or: pip install -r requirements.txt
+cp .env.example .env        # optional; set DATABASE_URL + JWT_SECRET as needed
 ```
 
-## Local run
+## Run FastAPI locally
+
+**Option A — script (native Postgres on port 5432, no Docker):** install Postgres (e.g. `brew install postgresql@16`, `brew services start postgresql@16`), then `createdb quikinspect`, then:
+
+```bash
+./scripts/run_local.sh
+```
+
+**Option B — uvicorn yourself:**
 
 ```bash
 source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 3000
+export DATABASE_URL='postgresql://YOUR_USER@127.0.0.1:5432/quikinspect'
+export JWT_SECRET='at-least-32-chars-for-local-dev'
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Point `EXPO_PUBLIC_API_URL` at `http://<LAN-IP>:3000` (same as the old server).
+Open **`http://127.0.0.1:8000/health`**. For a phone on the same Wi‑Fi, use your LAN IP and the same port in `EXPO_PUBLIC_API_URL`.
+
+Optional Docker DB: `docker compose up -d` in this folder, then set  
+`DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/quikinspect`.
 
 ## Migrations
 
-```bash
-export DATABASE_URL=postgresql://...?sslmode=require
-python scripts/migrate.py
-```
-
-SQL files live in `migrations/` (same schema as `server/migrations/`).
+- **First boot / empty DB:** the app runs SQL in **`migrations/*.sql`** once (when `public.inspectors` does not exist yet).
+- **Later changes:** run `python scripts/migrate.py` with `DATABASE_URL` set, or set **`FORCE_RUN_ALL_MIGRATIONS=1`** for one deploy to re-apply every file.
+- **Disable startup DDL:** `RUN_MIGRATIONS_ON_STARTUP=0`.
 
 ## Railway / Railpack
 
-**`railpack.json`** sets **`deploy.startCommand`** to `uvicorn main:app …` so Railpack does not fail with “No start command detected” ([Railpack config](https://railpack.com/config/file)). Root **`main.py`** re-exports the app from **`app.main`** so the `main:app` import path resolves.
-
-**`Procfile`** mirrors the same `web` command for runners that honor it. The platform should set **`PORT`** (Railway does).
-
-### Migrations on Railway (fixes “Database tables are missing” / signup errors)
-
-1. In the Railway service, set **`DATABASE_URL`** to your **Neon** connection string (same DB you intend to use; include `?sslmode=require` for remote).
-2. **One-time from your machine** (uses the same URL Railway has):
-
-   ```bash
-   cd backend
-   export DATABASE_URL='postgresql://…neon…?sslmode=require'
-   python scripts/migrate.py
-   ```
-
-3. **Or** rely on **`railway.toml`** in this repo: **`preDeployCommand`** runs **`python scripts/migrate.py`** on each deploy (idempotent SQL). Redeploy after adding it.
-
-If **`/health`** shows `inspectorsTable: true` but signup still says tables are missing, **`DATABASE_URL` on the web process may differ** from the DB you migrated (e.g. two Neon branches). Align them.
+**`railpack.json`** / **`Procfile`** use **`uvicorn main:app`** from the **deploy repo root**. Root **`main.py`** re-exports **`from app.main import app`** so `main:app` resolves. Set **`DATABASE_URL`**, **`JWT_SECRET`**, and **`PORT`** (Railway injects `PORT`).
 
 ## Vercel
 
 | Setting | Value |
 |--------|--------|
 | **Root directory** | `backend` |
-| **Framework** | **FastAPI** (or follow [Vercel FastAPI](https://vercel.com/docs/frameworks/backend/fastapi) + `pyproject.toml` `[tool.vercel]` entrypoint `app.main:app`) |
+| **Framework** | **FastAPI** (or `pyproject.toml` `[tool.vercel]` entrypoint `app.main:app`) |
 | **Output directory** | *(empty)* |
 
 Environment: `DATABASE_URL`, `JWT_SECRET`, optional `JWT_EXPIRES_IN`, `CORS_ORIGIN`.
-
-Do **not** set **Output directory** to `public` unless you know you need static files only — it can prevent the API from running.
 
 ## Layout
 
