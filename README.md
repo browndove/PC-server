@@ -30,6 +30,12 @@ python scripts/migrate.py
 
 SQL files live in `migrations/` (same schema as `server/migrations/`).
 
+## Railway / Railpack
+
+**`railpack.json`** sets **`deploy.startCommand`** to `uvicorn main:app …` so Railpack does not fail with “No start command detected” ([Railpack config](https://railpack.com/config/file)). Root **`main.py`** re-exports the app from **`app.main`** so the `main:app` import path resolves.
+
+**`Procfile`** mirrors the same `web` command for runners that honor it. The platform should set **`PORT`** (Railway does).
+
 ## Vercel
 
 | Setting | Value |
