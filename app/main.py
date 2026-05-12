@@ -23,14 +23,14 @@ async def lifespan(app: FastAPI):
             host = None
         src = "environment" if settings.uses_database_url_from_environment else "database_defaults.py"
         print(f"database: connecting via {src} pg_host={host!r}", flush=True)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await apply_inspectors_auth_bridge(conn)
+        # Do not run DDL on the critical path before yield — Railway can 502/timeout if bind is slow.
+        await get_pool()
 
         async def _run_schema_migrations() -> None:
             try:
                 pool = await get_pool()
                 async with pool.acquire() as conn:
+                    await apply_inspectors_auth_bridge(conn)
                     await run_startup_migrations(conn)
                 print("startup migrations task finished.", flush=True)
             except asyncio.CancelledError:

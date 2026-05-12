@@ -1,18 +1,22 @@
 """Run SQL from migrations/ at startup when the schema is incomplete.
 
 We skip re-applying only when **all** core tables from ``001_init.sql`` exist
-(``information_schema``), not just ``inspectors`` — partial installs used to
+(``information_schema``), not just ``inspectors`` -- partial installs used to
 leave the DB broken while startup incorrectly skipped migrations.
 
-- ``FORCE_RUN_ALL_MIGRATIONS=1`` — always run every ``*.sql`` file.
-- ``python scripts/migrate.py`` — always runs all files (one-off).
+- ``FORCE_RUN_ALL_MIGRATIONS=1`` -- always run every ``*.sql`` file.
+- ``python scripts/migrate.py`` -- always runs all files (one-off).
 
-``RUN_MIGRATIONS_ON_STARTUP=0`` — skip startup migration logic entirely.
+``RUN_MIGRATIONS_ON_STARTUP=0`` -- skip startup migration logic entirely.
 
-``main.py`` also runs ``001z_inspectors_auth_bridge.sql`` **synchronously** right
-after the pool is created (before accepting traffic), because legacy databases
-can have all six core *table names* while ``inspectors`` still lacks columns the
-auth router needs — in that case full startup migrations are skipped.
+``main.py`` runs ``001z_inspectors_auth_bridge.sql`` in the same **background**
+task as ``run_startup_migrations`` (before the 6/6 skip check), so the server
+binds immediately while legacy ``inspectors`` rows still get ``updated_at`` /
+``signature_url``.
+
+Each ``*.sql`` file runs in its **own** transaction so a failure in a later file
+does not roll back DDL from earlier files (avoids stuck ``4/6`` partial schema).
+"""
 
 from __future__ import annotations
 
@@ -50,9 +54,8 @@ INSPECTORS_AUTH_BRIDGE_FILE = "001z_inspectors_auth_bridge.sql"
 async def apply_inspectors_auth_bridge(conn: asyncpg.Connection) -> None:
     """Add ``updated_at`` / ``signature_url`` on legacy ``inspectors`` (idempotent).
 
-    Runs **before** request traffic: when all six core *table names* exist, full
-    startup migrations are skipped — but legacy rows may still lack columns the
-    auth router expects, which produced 503 on ``/auth/signup`` (``42703``).
+    When all six core *table names* exist, full startup migrations are skipped,
+    but legacy rows may still lack columns the auth router expects (503 on signup).
     """
     row = await conn.fetchrow("select to_regclass('public.inspectors') as t")
     if not row or row["t"] is None:
