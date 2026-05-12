@@ -13,6 +13,20 @@ from app.jwt_util import verify_access_token
 security = HTTPBearer(auto_error=False)
 
 
+async def require_jwt_secret_configured() -> None:
+    """Run before DB so signup/login fail fast with a clear 503 if Railway env is incomplete."""
+    from fastapi import HTTPException
+
+    if not get_settings().jwt_secret.strip():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Missing JWT_SECRET. In Railway → Variables add JWT_SECRET (e.g. run: openssl rand -base64 32).",
+                "code": "MISSING_JWT_SECRET",
+            },
+        )
+
+
 async def get_db() -> AsyncGenerator[asyncpg.Connection, None]:
     pool = await get_pool()
     async with pool.acquire() as conn:

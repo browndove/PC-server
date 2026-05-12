@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 from app.config import get_settings
-from app.deps import get_db, require_inspector
+from app.deps import get_db, require_inspector, require_jwt_secret_configured
 from app.jwt_util import sign_access_token
 from app.password_util import hash_password, verify_password
 from app.pg_errors import (
@@ -72,11 +72,12 @@ async def login_get() -> JSONResponse:
 
 
 @router.post("/signup")
-async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -> JSONResponse:
+async def signup(
+    body: SignupBody,
+    _: None = Depends(require_jwt_secret_configured),
+    conn: asyncpg.Connection = Depends(get_db),
+) -> JSONResponse:
     settings = get_settings()
-    if not settings.jwt_secret.strip():
-        return JSONResponse(status_code=503, content={"error": "Server is misconfigured (missing JWT secret)."})
-
     email = body.email.lower()
     try:
         password_hash = hash_password(body.password)
@@ -128,6 +129,7 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
                         "The API applies SQL migrations on first startup when public.inspectors does not exist; "
                         "redeploy after fixing the URL, or run: cd backend && python scripts/migrate.py"
                     ),
+                    "code": "DB_MISSING_TABLES",
                 },
             )
         if code == "42703":
@@ -135,6 +137,7 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
                 status_code=503,
                 content={
                     "error": "Database schema is out of date. Run migrations against the database used by deployment.",
+                    "code": "DB_SCHEMA_OUTDATED",
                 },
             )
         if looks_like_db_transport_failure(e):
@@ -142,18 +145,23 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
                 status_code=503,
                 content={
                     "error": "API cannot reach the database. Fix DATABASE_URL (Neon connection string) in environment.",
+                    "code": "DB_UNREACHABLE",
                 },
             )
         if "password authentication failed" in chain.lower():
             return JSONResponse(
                 status_code=503,
-                content={"error": "Database URL password is wrong. Update DATABASE_URL in the server environment."},
+                content={
+                    "error": "Database URL password is wrong. Update DATABASE_URL in the server environment.",
+                    "code": "DB_AUTH_FAILED",
+                },
             )
         if "JWT_SECRET" in chain or re.search(r"secret.*jwt|jwt.*secret|secretOrPrivateKey", chain, re.I):
             return JSONResponse(
                 status_code=503,
                 content={
                     "error": "Server cannot sign login tokens. Set a strong JWT_SECRET (e.g. openssl rand -base64 32).",
+                    "code": "JWT_SIGN_FAILED",
                 },
             )
         if re.search(r"bcrypt|hash.*password|password.*hash", chain, re.I):
@@ -170,7 +178,11 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
 
 
 @router.post("/login")
-async def login(body: LoginBody, conn: asyncpg.Connection = Depends(get_db)) -> JSONResponse:
+async def login(
+    body: LoginBody,
+    _: None = Depends(require_jwt_secret_configured),
+    conn: asyncpg.Connection = Depends(get_db),
+) -> JSONResponse:
     settings = get_settings()
     email = body.email.lower()
     rows = await conn.fetch(
