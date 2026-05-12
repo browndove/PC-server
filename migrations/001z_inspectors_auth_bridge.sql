@@ -23,3 +23,23 @@ BEGIN
       $u$;
   END IF;
 END $$;
+
+-- Canonical signup INSERT only sends first_name / last_name. Legacy schemas often
+-- had NOT NULL full_name; without a default, INSERT hits 23502.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'inspectors'
+      AND column_name = 'full_name'
+  ) THEN
+    BEGIN
+      EXECUTE 'ALTER TABLE public.inspectors ALTER COLUMN full_name DROP NOT NULL';
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+  END IF;
+END $$;
