@@ -36,6 +36,21 @@ SQL files live in `migrations/` (same schema as `server/migrations/`).
 
 **`Procfile`** mirrors the same `web` command for runners that honor it. The platform should set **`PORT`** (Railway does).
 
+### Migrations on Railway (fixes “Database tables are missing” / signup errors)
+
+1. In the Railway service, set **`DATABASE_URL`** to your **Neon** connection string (same DB you intend to use; include `?sslmode=require` for remote).
+2. **One-time from your machine** (uses the same URL Railway has):
+
+   ```bash
+   cd backend
+   export DATABASE_URL='postgresql://…neon…?sslmode=require'
+   python scripts/migrate.py
+   ```
+
+3. **Or** rely on **`railway.toml`** in this repo: **`preDeployCommand`** runs **`python scripts/migrate.py`** on each deploy (idempotent SQL). Redeploy after adding it.
+
+If **`/health`** shows `inspectorsTable: true` but signup still says tables are missing, **`DATABASE_URL` on the web process may differ** from the DB you migrated (e.g. two Neon branches). Align them.
+
 ## Vercel
 
 | Setting | Value |

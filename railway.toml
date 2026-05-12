@@ -1,0 +1,4 @@
+# Railway config-as-code: https://docs.railway.com/deploy/config-as-code
+# Runs SQL in migrations/ against DATABASE_URL before the new revision goes live.
+[deploy]
+preDeployCommand = "python scripts/migrate.py"

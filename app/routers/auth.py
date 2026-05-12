@@ -122,7 +122,7 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
             return JSONResponse(
                 status_code=503,
                 content={
-                    "error": "Database not initialized. From the API project run migrations (with DATABASE_URL set to your Neon DB).",
+                    "error": "Database tables are missing on this DATABASE_URL (migrations not applied). In Railway: set Variables → DATABASE_URL to your Neon DB, then run once from your laptop: `cd backend && export DATABASE_URL=\"…\" && python scripts/migrate.py` — or enable preDeploy in `railway.toml` and redeploy.",
                 },
             )
         if code == "42703":
