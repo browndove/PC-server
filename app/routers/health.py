@@ -9,6 +9,7 @@ from fastapi.responses import Response
 
 from app.config import get_settings
 from app.db import get_pool
+from app.schema_bootstrap import CORE_PUBLIC_TABLE_NAMES
 from app.pg_errors import (
     error_message_chain,
     looks_like_db_transport_failure,
@@ -61,7 +62,25 @@ async def health() -> dict:
                 "select to_regclass('public.inspectors') is not null as ready",
             )
             base["database"]["inspectorsTable"] = bool(row and row["ready"])
-            if not base["database"]["inspectorsTable"]:
+            nrow = await conn.fetchrow(
+                """
+                select count(*)::int as n
+                from information_schema.tables
+                where table_schema = 'public'
+                  and table_type = 'BASE TABLE'
+                  and table_name = any($1::text[])
+                """,
+                list(CORE_PUBLIC_TABLE_NAMES),
+            )
+            base["database"]["coreTablesPresent"] = nrow["n"] if nrow else 0
+            base["database"]["coreTablesExpected"] = len(CORE_PUBLIC_TABLE_NAMES)
+            if base["database"]["coreTablesPresent"] < base["database"]["coreTablesExpected"]:
+                base["database"]["hint"] = (
+                    f"Incomplete schema ({base['database']['coreTablesPresent']}/"
+                    f"{base['database']['coreTablesExpected']} core tables). "
+                    "Redeploy the API or set FORCE_RUN_ALL_MIGRATIONS=1 once."
+                )
+            elif not base["database"]["inspectorsTable"]:
                 base["database"]["hint"] = (
                     "Connected, but public.inspectors is missing — migrations may have failed at startup; "
                     "check logs or run python scripts/migrate.py."

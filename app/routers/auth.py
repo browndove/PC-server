@@ -124,10 +124,9 @@ async def signup(
                 status_code=503,
                 content={
                     "error": (
-                        "Database tables are missing for this DATABASE_URL. "
-                        "Confirm Railway Variables → DATABASE_URL points at the Neon branch you expect. "
-                        "The API applies SQL migrations on first startup when public.inspectors does not exist; "
-                        "redeploy after fixing the URL, or run: cd backend && python scripts/migrate.py"
+                        "Database tables are missing or incomplete for this DATABASE_URL. "
+                        "The API runs migrations on startup until all core tables exist; redeploy, or set "
+                        "FORCE_RUN_ALL_MIGRATIONS=1 once and redeploy, or run: cd backend && python scripts/migrate.py"
                     ),
                     "code": "DB_MISSING_TABLES",
                 },
