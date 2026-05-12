@@ -80,8 +80,8 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
         password_hash = hash_password(body.password)
         rows = await conn.fetch(
             """
-            insert into inspectors (email, password_hash, first_name, last_name)
-            values ($1, $2, $3, $4)
+            insert into inspectors (email, password_hash, first_name, last_name, created_at, updated_at)
+            values ($1, $2, $3, $4, now(), now())
             returning id
             """,
             email,
@@ -109,6 +109,13 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
         chain = error_message_chain(e)
         if code == "23505" or looks_like_unique_violation(e):
             return JSONResponse(status_code=409, content={"error": "Email already registered"})
+        if code == "23502":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Database rejected signup (often missing timestamp defaults on an older DB). Run backend migrations, then try again. If it persists, re-enter first and last name on the previous screen.",
+                },
+            )
         if code == "42P01" or looks_like_missing_relation(e):
             return JSONResponse(
                 status_code=503,
