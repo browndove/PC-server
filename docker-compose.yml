@@ -1,3 +1,4 @@
+# Optional local Postgres in Docker. API default is native brew Postgres (see scripts/run_local.sh).
 services:
   db:
     image: postgres:16-alpine
