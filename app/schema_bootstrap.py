@@ -9,9 +9,10 @@ leave the DB broken while startup incorrectly skipped migrations.
 
 ``RUN_MIGRATIONS_ON_STARTUP=0`` — skip startup migration logic entirely.
 
-Each ``*.sql`` file runs in its **own** transaction so a failure in a later file
-does not roll back DDL from earlier files (avoids stuck ``4/6`` partial schema).
-"""
+``main.py`` also runs ``001z_inspectors_auth_bridge.sql`` **synchronously** right
+after the pool is created (before accepting traffic), because legacy databases
+can have all six core *table names* while ``inspectors`` still lacks columns the
+auth router needs — in that case full startup migrations are skipped.
 
 from __future__ import annotations
 
@@ -41,6 +42,29 @@ def migrations_on_startup_enabled() -> bool:
 def force_run_all_migrations() -> bool:
     v = os.environ.get("FORCE_RUN_ALL_MIGRATIONS", "").strip().lower()
     return v in ("1", "true", "yes", "on")
+
+
+INSPECTORS_AUTH_BRIDGE_FILE = "001z_inspectors_auth_bridge.sql"
+
+
+async def apply_inspectors_auth_bridge(conn: asyncpg.Connection) -> None:
+    """Add ``updated_at`` / ``signature_url`` on legacy ``inspectors`` (idempotent).
+
+    Runs **before** request traffic: when all six core *table names* exist, full
+    startup migrations are skipped — but legacy rows may still lack columns the
+    auth router expects, which produced 503 on ``/auth/signup`` (``42703``).
+    """
+    row = await conn.fetchrow("select to_regclass('public.inspectors') as t")
+    if not row or row["t"] is None:
+        return
+    path = MIGRATIONS_DIR / INSPECTORS_AUTH_BRIDGE_FILE
+    if not path.is_file():
+        print(f"migrations: missing {path.name}, skipping inspectors auth bridge.", flush=True)
+        return
+    sql = path.read_text(encoding="utf-8")
+    async with conn.transaction():
+        await conn.execute(sql)
+    print("migrations: inspectors auth bridge applied (idempotent).", flush=True)
 
 
 async def missing_core_public_tables(conn: asyncpg.Connection) -> list[str]:

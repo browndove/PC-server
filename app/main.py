@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_pool, get_pool
-from app.schema_bootstrap import run_startup_migrations
+from app.schema_bootstrap import apply_inspectors_auth_bridge, run_startup_migrations
 from app.routers import auth, checklists, facilities, health, inspections
 
 
@@ -23,7 +23,9 @@ async def lifespan(app: FastAPI):
             host = None
         src = "environment" if settings.uses_database_url_from_environment else "database_defaults.py"
         print(f"database: connecting via {src} pg_host={host!r}", flush=True)
-        await get_pool()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await apply_inspectors_auth_bridge(conn)
 
         async def _run_schema_migrations() -> None:
             try:
