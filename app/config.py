@@ -1,9 +1,24 @@
+import os
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.database_defaults import DEFAULT_DATABASE_URL
+
+
+def _settings_config() -> SettingsConfigDict:
+    # On Railway, never read a bundled .env from disk — it can override or blank DATABASE_URL.
+    on_railway = bool(
+        os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_SERVICE_ID"),
+    )
+    return SettingsConfigDict(
+        env_file=None if on_railway else ".env",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
 
 
 def normalize_database_url(raw: str) -> str:
@@ -20,12 +35,16 @@ def normalize_database_url(raw: str) -> str:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = _settings_config()
 
     database_url: str = ""
     jwt_secret: str = ""
     jwt_expires_in: str = "7d"
     cors_origin: str = "*"
+
+    @property
+    def uses_database_url_from_environment(self) -> bool:
+        return bool(self.database_url.strip())
 
     @property
     def effective_database_url(self) -> str:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter
 from fastapi.responses import Response
@@ -30,7 +31,22 @@ async def health() -> dict:
         },
     }
     settings = get_settings()
-    if not settings.database_url_normalized.strip():
+    norm = settings.database_url_normalized.strip()
+    if norm:
+        try:
+            base["database"]["pgHost"] = urlparse(norm).hostname
+        except Exception:
+            base["database"]["pgHost"] = None
+        base["database"]["urlSource"] = (
+            "environment"
+            if settings.uses_database_url_from_environment
+            else "database_defaults.py"
+        )
+    else:
+        base["database"]["pgHost"] = None
+        base["database"]["urlSource"] = None
+
+    if not norm:
         base["database"]["hint"] = (
             "No database URL: set DATABASE_URL or DEFAULT_DATABASE_URL in app/database_defaults.py."
         )
@@ -61,6 +77,8 @@ async def health() -> dict:
             base["database"]["hint"] = "Database rejected credentials (wrong password in URL)."
         else:
             base["database"]["hint"] = "Database check failed — see server logs."
+        if code:
+            base["database"]["errorCode"] = code
         print("health db check", chain)
     base["time"] = datetime.now(timezone.utc).isoformat()
     return base

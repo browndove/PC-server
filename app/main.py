@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,13 @@ from app.routers import auth, checklists, facilities, health, inspections
 async def lifespan(_: FastAPI):
     settings = get_settings()
     if settings.database_url_normalized:
+        norm = settings.database_url_normalized
+        try:
+            host = urlparse(norm).hostname
+        except Exception:
+            host = None
+        src = "environment" if settings.uses_database_url_from_environment else "database_defaults.py"
+        print(f"database: connecting via {src} pg_host={host!r}", flush=True)
         pool = await get_pool()
         async with pool.acquire() as conn:
             await run_startup_migrations(conn)
