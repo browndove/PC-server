@@ -27,4 +27,4 @@ fi
 
 echo "DATABASE_URL=$DATABASE_URL"
 echo "Starting API at http://127.0.0.1:8000 (Ctrl+C to stop)"
-exec uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+exec python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000

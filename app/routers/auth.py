@@ -122,7 +122,12 @@ async def signup(body: SignupBody, conn: asyncpg.Connection = Depends(get_db)) -
             return JSONResponse(
                 status_code=503,
                 content={
-                    "error": "Database tables are missing on this DATABASE_URL (migrations not applied). In Railway: set Variables → DATABASE_URL to your Neon DB, then run once from your laptop: `cd backend && export DATABASE_URL=\"…\" && python scripts/migrate.py` — or enable preDeploy in `railway.toml` and redeploy.",
+                    "error": (
+                        "Database tables are missing for this DATABASE_URL. "
+                        "Confirm Railway Variables → DATABASE_URL points at the Neon branch you expect. "
+                        "The API applies SQL migrations on first startup when public.inspectors does not exist; "
+                        "redeploy after fixing the URL, or run: cd backend && python scripts/migrate.py"
+                    ),
                 },
             )
         if code == "42703":

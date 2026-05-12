@@ -22,13 +22,13 @@ cp .env.example .env        # optional; set DATABASE_URL + JWT_SECRET as needed
 ./scripts/run_local.sh
 ```
 
-**Option B — uvicorn yourself:**
+**Option B — uvicorn yourself:** run from this **`backend/`** directory (not `server/`). If your Neon URL contains **`&`**, wrap it in **single quotes** in the shell or the string is cut at `&`.
 
 ```bash
 source .venv/bin/activate
 export DATABASE_URL='postgresql://YOUR_USER@127.0.0.1:5432/quikinspect'
 export JWT_SECRET='at-least-32-chars-for-local-dev'
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Open **`http://127.0.0.1:8000/health`**. For a phone on the same Wi‑Fi, use your LAN IP and the same port in `EXPO_PUBLIC_API_URL`.
