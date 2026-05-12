@@ -1,0 +1,14 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: quik-inspect-pg
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: quikinspect
+    ports:
+      - "54322:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quikinspect"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
