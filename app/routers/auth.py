@@ -81,17 +81,37 @@ async def signup(
     email = body.email.lower()
     try:
         password_hash = hash_password(body.password)
-        rows = await conn.fetch(
-            """
-            insert into inspectors (email, password_hash, first_name, last_name, created_at, updated_at)
-            values ($1, $2, $3, $4, now(), now())
-            returning id
-            """,
-            email,
-            password_hash,
-            body.firstName,
-            body.lastName,
-        )
+        full_name = f"{body.firstName.strip()} {body.lastName.strip()}".strip()
+        rows: list[asyncpg.Record] | None = None
+        for attempt, sql, args in (
+            (
+                1,
+                """
+                insert into inspectors (email, password_hash, first_name, last_name, created_at, updated_at)
+                values ($1, $2, $3, $4, now(), now())
+                returning id
+                """,
+                (email, password_hash, body.firstName, body.lastName),
+            ),
+            (
+                2,
+                """
+                insert into inspectors (email, password_hash, first_name, last_name, full_name, created_at, updated_at)
+                values ($1, $2, $3, $4, $5, now(), now())
+                returning id
+                """,
+                (email, password_hash, body.firstName, body.lastName, full_name),
+            ),
+        ):
+            try:
+                rows = await conn.fetch(sql, *args)
+                break
+            except Exception as e:
+                if attempt == 1 and postgres_error_code(e) == "23502":
+                    continue
+                raise
+        if not rows:
+            raise RuntimeError("signup insert produced no rows")
         rid = _first_row_id(list(rows))
         if not rid:
             print("signup insert returned no id", rows)
