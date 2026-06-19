@@ -6,7 +6,7 @@ import uuid
 import asyncpg
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 from app.config import get_settings
 from app.deps import get_db, require_inspector, require_jwt_secret_configured
@@ -45,7 +45,37 @@ class ProfileBody(BaseModel):
 
 
 class SignatureBody(BaseModel):
-    signatureUrl: HttpUrl
+    """HTTPS asset URL or PNG data URL from the mobile signature pad."""
+
+    signatureUrl: str | None = None
+    signatureData: str | None = Field(default=None, max_length=2_000_000)
+
+    @model_validator(mode="after")
+    def _validate_signature_payload(self) -> "SignatureBody":
+        if self.signatureData == "":
+            return self
+        url = (self.signatureUrl or "").strip()
+        data = (self.signatureData or "").strip()
+        if not url and not data:
+            raise ValueError("signatureUrl or signatureData is required")
+        if data and not data.startswith("data:image/"):
+            raise ValueError("signatureData must be a data:image URL")
+        if url and not (
+            url.startswith("http://")
+            or url.startswith("https://")
+            or url.startswith("data:image/")
+        ):
+            raise ValueError("signatureUrl must be http(s) or data:image")
+        return self
+
+    def resolved_value(self) -> str | None:
+        if self.signatureData == "":
+            return None
+        data = (self.signatureData or "").strip()
+        if data:
+            return data
+        url = (self.signatureUrl or "").strip()
+        return url or None
 
 
 def _first_row_id(rows: list[asyncpg.Record] | None) -> str | None:
@@ -58,6 +88,42 @@ def _first_row_id(rows: list[asyncpg.Record] | None) -> str | None:
     if isinstance(v, str) and v:
         return v
     return None
+
+
+def _combined_full_name(first: str | None, last: str | None) -> str:
+    """Single display string from first + last (matches mobile signup fields)."""
+    a = (first or "").strip()
+    b = (last or "").strip()
+    if a and b:
+        return f"{a} {b}"
+    return a or b
+
+
+async def _sync_legacy_full_name_column(
+    conn: asyncpg.Connection,
+    inspector_id: str,
+    first_name: str | None,
+    last_name: str | None,
+) -> None:
+    """If legacy ``inspectors.full_name`` exists, keep it aligned with first/last."""
+    has = await conn.fetchval(
+        """
+        select exists(
+          select 1 from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'inspectors'
+            and column_name = 'full_name'
+        )
+        """
+    )
+    if not has:
+        return
+    fn = _combined_full_name(first_name, last_name)
+    await conn.execute(
+        "update public.inspectors set full_name = $2 where id = $1::uuid",
+        inspector_id,
+        fn,
+    )
 
 
 @router.get("/login")
@@ -120,11 +186,19 @@ async def signup(
                 content={"error": "Account was not saved correctly. Redeploy the API or run database migrations."},
             )
         token = sign_access_token(settings, sub=rid, email=email)
+        display = _combined_full_name(body.firstName, body.lastName)
+        await _sync_legacy_full_name_column(conn, rid, body.firstName, body.lastName)
         return JSONResponse(
             status_code=201,
             content={
                 "token": token,
-                "inspector": {"id": rid, "email": email, "firstName": body.firstName, "lastName": body.lastName},
+                "inspector": {
+                    "id": rid,
+                    "email": email,
+                    "firstName": body.firstName,
+                    "lastName": body.lastName,
+                    "fullName": display,
+                },
             },
         )
     except Exception as e:
@@ -226,6 +300,7 @@ async def login(
                 "email": email,
                 "firstName": row["first_name"],
                 "lastName": row["last_name"],
+                "fullName": _combined_full_name(row["first_name"], row["last_name"]),
             },
         },
     )
@@ -253,6 +328,7 @@ async def me(conn: asyncpg.Connection = Depends(get_db), auth: tuple[str, str] =
             "email": row["email"],
             "firstName": row["first_name"],
             "lastName": row["last_name"],
+            "fullName": _combined_full_name(row["first_name"], row["last_name"]),
             "phone": row["phone"],
             "signatureUrl": row["signature_url"],
             "createdAt": row["created_at"].isoformat() if row["created_at"] else None,
@@ -306,12 +382,14 @@ async def profile(
         if not row:
             return JSONResponse(status_code=404, content={"error": "Not found"})
         rid = str(row["id"]) if isinstance(row["id"], uuid.UUID) else row["id"]
+        await _sync_legacy_full_name_column(conn, rid, row["first_name"], row["last_name"])
         return JSONResponse(
             content={
                 "id": rid,
                 "email": row["email"],
                 "firstName": row["first_name"],
                 "lastName": row["last_name"],
+                "fullName": _combined_full_name(row["first_name"], row["last_name"]),
                 "phone": row["phone"],
             },
         )
@@ -330,17 +408,26 @@ async def signature(
     auth: tuple[str, str] = Depends(require_inspector),
 ) -> JSONResponse:
     inspector_id, _email = auth
-    url = str(body.signatureUrl)
-    rows = await conn.fetch(
-        """
-        update inspectors
-        set signature_url = $2, updated_at = now()
-        where id = $1::uuid
-        returning id, signature_url
-        """,
-        inspector_id,
-        url,
-    )
+    url = body.resolved_value()
+    try:
+        rows = await conn.fetch(
+            """
+            update inspectors
+            set signature_url = $2, updated_at = now()
+            where id = $1::uuid
+            returning id, signature_url
+            """,
+            inspector_id,
+            url,
+        )
+    except asyncpg.UndefinedColumnError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "Database is missing inspectors.signature_url. Redeploy the API or run backend migrations.",
+                "code": "SCHEMA_SIGNATURE_URL",
+            },
+        )
     row = rows[0] if rows else None
     if not row:
         return JSONResponse(status_code=404, content={"error": "Not found"})

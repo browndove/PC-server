@@ -71,13 +71,10 @@ class SignoffBody(BaseModel):
     data: dict[str, Any]
 
 
-async def _assert_facility_owned(
-    conn: asyncpg.Connection, inspector_id: str, facility_id: str,
-) -> bool:
+async def _assert_facility_exists(conn: asyncpg.Connection, facility_id: str) -> bool:
     rows = await conn.fetch(
-        "select id from facilities where id = $1::uuid and inspector_id = $2::uuid limit 1",
+        "select id from facilities where id = $1::uuid limit 1",
         facility_id,
-        inspector_id,
     )
     return bool(rows)
 
@@ -171,7 +168,7 @@ async def create_insp(
     inspector_id, _ = auth
     fid = body.facilityId
     if fid:
-        if not await _assert_facility_owned(conn, inspector_id, fid):
+        if not await _assert_facility_exists(conn, fid):
             return JSONResponse(status_code=404, content={"error": "Facility not found"})
     itype = body.type or "pharmacy_routine"
     data = body.data if body.data is not None else {}
@@ -618,7 +615,7 @@ async def put_insp(
         return JSONResponse(status_code=404, content={"error": "Not found"})
 
     if "facilityId" in body.model_fields_set and body.facilityId:
-        if not await _assert_facility_owned(conn, inspector_id, body.facilityId):
+        if not await _assert_facility_exists(conn, body.facilityId):
             return JSONResponse(status_code=404, content={"error": "Facility not found"})
 
     if "facilityId" in body.model_fields_set:

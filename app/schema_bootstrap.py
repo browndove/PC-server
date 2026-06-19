@@ -51,6 +51,33 @@ def force_run_all_migrations() -> bool:
 INSPECTORS_AUTH_BRIDGE_FILE = "001z_inspectors_auth_bridge.sql"
 
 
+async def inspectors_auth_columns_ready(conn: asyncpg.Connection) -> bool:
+    """True when ``inspectors`` has columns required by ``/auth/me`` and ``PUT /auth/signature``."""
+    reg = await conn.fetchrow("select to_regclass('public.inspectors') as t")
+    if not reg or reg["t"] is None:
+        return True
+    row = await conn.fetchrow(
+        """
+        select
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'inspectors'
+              and column_name = 'signature_url'
+          ) as has_signature_url,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'inspectors'
+              and column_name = 'updated_at'
+          ) as has_updated_at
+        """,
+    )
+    if not row:
+        return False
+    return bool(row["has_signature_url"] and row["has_updated_at"])
+
+
 async def apply_inspectors_auth_bridge(conn: asyncpg.Connection) -> None:
     """Add ``updated_at`` / ``signature_url`` on legacy ``inspectors`` (idempotent).
 
@@ -89,6 +116,110 @@ async def _core_public_tables_present(conn: asyncpg.Connection) -> bool:
     return len(await missing_core_public_tables(conn)) == 0
 
 
+async def inspections_api_schema_complete(conn: asyncpg.Connection) -> bool:
+    """True when ``inspections`` has columns required by POST/PUT ``/inspections``.
+
+    Legacy databases often had ``inspections`` without ``type`` / ``data`` /
+    ``submitted_at``. Startup used to skip *all* migrations once the six core
+    *table names* existed, so ``004_legacy_api_columns.sql`` never ran and inserts
+    failed with ``UndefinedColumnError`` (HTTP 500).
+    """
+    reg = await conn.fetchrow("select to_regclass('public.inspections') as t")
+    if not reg or reg["t"] is None:
+        return False
+    row = await conn.fetchrow(
+        """
+        select
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public' and table_name = 'inspections' and column_name = 'inspector_id'
+          ) as has_inspector_id,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public' and table_name = 'inspections' and column_name = 'type'
+          ) as has_type,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public' and table_name = 'inspections' and column_name = 'data'
+          ) as has_data,
+          exists(
+            select 1 from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'inspections'
+              and column_name = 'facility_id'
+              and is_nullable = 'YES'
+          ) as facility_id_nullable
+        """,
+    )
+    if not row:
+        return False
+    has_legacy_insp_type = await conn.fetchval(
+        """
+        select exists(
+          select 1 from information_schema.columns
+          where table_schema = 'public' and table_name = 'inspections' and column_name = 'inspection_type'
+        )
+        """,
+    )
+    legacy_type_ok = True
+    if has_legacy_insp_type:
+        legacy_type_ok = bool(
+            await conn.fetchval(
+                """
+                select exists(
+                  select 1
+                  from pg_trigger t
+                  join pg_class c on c.oid = t.tgrelid
+                  join pg_namespace n on n.oid = c.relnamespace
+                  where n.nspname = 'public'
+                    and c.relname = 'inspections'
+                    and t.tgname = 'inspections_legacy_from_type_trg'
+                    and not t.tgisinternal
+                )
+                """,
+            ),
+        )
+    return bool(
+        row["has_inspector_id"]
+        and row["has_type"]
+        and row["has_data"]
+        and row["facility_id_nullable"]
+        and legacy_type_ok,
+    )
+
+
+async def facilities_insert_api_ready(conn: asyncpg.Connection) -> bool:
+    """True when legacy ``facility_type`` column is absent, or insert defaults trigger is installed."""
+    reg = await conn.fetchrow("select to_regclass('public.facilities') as t")
+    if not reg or reg["t"] is None:
+        return True
+    has_facility_type = await conn.fetchval(
+        """
+        select exists(
+          select 1 from information_schema.columns
+          where table_schema = 'public' and table_name = 'facilities' and column_name = 'facility_type'
+        )
+        """,
+    )
+    if not has_facility_type:
+        return True
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1 from pg_trigger t
+              join pg_class c on c.oid = t.tgrelid
+              join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = 'public'
+                and c.relname = 'facilities'
+                and t.tgname = 'facilities_legacy_insert_defaults_trg'
+                and not t.tgisinternal
+            )
+            """,
+        ),
+    )
+
+
 async def apply_all_migration_files(conn: asyncpg.Connection) -> int:
     """Run each ``*.sql`` in its **own** transaction so a failure in 002/003 does not roll back 001."""
     files = sorted(MIGRATIONS_DIR.glob("*.sql"))
@@ -109,11 +240,20 @@ async def run_startup_migrations(conn: asyncpg.Connection) -> None:
         print("migrations: skipped (RUN_MIGRATIONS_ON_STARTUP disabled).", flush=True)
         return
     if not force_run_all_migrations():
-        if await _core_public_tables_present(conn):
+        core_ok = await _core_public_tables_present(conn)
+        insp_ok = await inspections_api_schema_complete(conn)
+        fac_ok = await facilities_insert_api_ready(conn)
+        auth_cols_ok = await inspectors_auth_columns_ready(conn)
+        if core_ok and insp_ok and fac_ok and auth_cols_ok:
             print(
-                f"migrations: skipped ({len(CORE_PUBLIC_TABLE_NAMES)} core public tables already present).",
+                f"migrations: skipped ({len(CORE_PUBLIC_TABLE_NAMES)} core tables present; inspections, facilities, and inspectors auth columns API-ready).",
                 flush=True,
             )
             return
+        if core_ok and (not insp_ok or not fac_ok or not auth_cols_ok):
+            print(
+                "migrations: core tables exist but schema is not fully API-ready (inspections, facilities, and/or inspectors auth); applying migration files.",
+                flush=True,
+            )
     n = await apply_all_migration_files(conn)
     print(f"migrations: applied {n} SQL file(s) from {MIGRATIONS_DIR.name}/.", flush=True)

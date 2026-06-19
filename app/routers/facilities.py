@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from app.deps import get_db, require_inspector
 
 router = APIRouter(prefix="/facilities", tags=["facilities"])
+# Facilities are licensed premises in a shared council registry — not scoped to one inspector.
+# ``inspector_id`` on INSERT is audit only (who recorded this row); list/get/put are council-wide.
 
 
 class FacilityCreate(BaseModel):
@@ -39,19 +41,18 @@ async def list_facilities(
     auth: tuple[str, str] = Depends(require_inspector),
     q: str | None = Query(default=None),
 ) -> dict:
-    inspector_id, _ = auth
+    _inspector_id, _ = auth
     if q and q.strip():
         like = f"%{q.strip()}%"
         rows = await conn.fetch(
             """
             select id, name, region, mmda, meta, created_at
             from facilities
-            where inspector_id = $1::uuid
-              and (lower(name) like lower($2) or lower(coalesce(region,'')) like lower($2))
+            where lower(name) like lower($1)
+               or lower(coalesce(region, '')) like lower($1)
             order by created_at desc
-            limit 100
+            limit 200
             """,
-            inspector_id,
             like,
         )
     else:
@@ -59,11 +60,9 @@ async def list_facilities(
             """
             select id, name, region, mmda, meta, created_at
             from facilities
-            where inspector_id = $1::uuid
             order by created_at desc
-            limit 100
+            limit 200
             """,
-            inspector_id,
         )
     out = []
     for r in rows:
@@ -89,6 +88,8 @@ async def create_facility(
 ) -> JSONResponse:
     inspector_id, _ = auth
     meta = body.meta if body.meta is not None else {}
+    # Legacy ``facilities.region`` may be NOT NULL; empty string satisfies constraint.
+    region = body.region if body.region is not None and str(body.region).strip() else ""
     rows = await conn.fetch(
         """
         insert into facilities (inspector_id, name, region, mmda, meta)
@@ -97,7 +98,7 @@ async def create_facility(
         """,
         inspector_id,
         body.name,
-        body.region,
+        region,
         body.mmda,
         json.dumps(meta),
     )
@@ -112,7 +113,7 @@ async def get_facility(
     conn: asyncpg.Connection = Depends(get_db),
     auth: tuple[str, str] = Depends(require_inspector),
 ) -> JSONResponse:
-    inspector_id, _ = auth
+    _inspector_id, _ = auth
     try:
         fid = _uuid(facility_id)
     except ValueError:
@@ -121,11 +122,10 @@ async def get_facility(
         """
         select id, name, region, mmda, meta, created_at, updated_at
         from facilities
-        where id = $1::uuid and inspector_id = $2::uuid
+        where id = $1::uuid
         limit 1
         """,
         fid,
-        inspector_id,
     )
     row = rows[0] if rows else None
     if not row:
@@ -150,7 +150,7 @@ async def update_facility(
     conn: asyncpg.Connection = Depends(get_db),
     auth: tuple[str, str] = Depends(require_inspector),
 ) -> JSONResponse:
-    inspector_id, _ = auth
+    _inspector_id, _ = auth
     try:
         fid = _uuid(facility_id)
     except ValueError:
@@ -159,11 +159,10 @@ async def update_facility(
         """
         select name, region, mmda, meta
         from facilities
-        where id = $1::uuid and inspector_id = $2::uuid
+        where id = $1::uuid
         limit 1
         """,
         fid,
-        inspector_id,
     )
     if not cur:
         return JSONResponse(status_code=404, content={"error": "Not found"})
@@ -176,16 +175,15 @@ async def update_facility(
         """
         update facilities
         set
-          name = $3,
-          region = $4,
-          mmda = $5,
-          meta = $6::jsonb,
+          name = $2,
+          region = $3,
+          mmda = $4,
+          meta = $5::jsonb,
           updated_at = now()
-        where id = $1::uuid and inspector_id = $2::uuid
+        where id = $1::uuid
         returning id
         """,
         fid,
-        inspector_id,
         name,
         region,
         mmda,
